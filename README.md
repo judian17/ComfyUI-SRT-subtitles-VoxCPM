@@ -80,12 +80,12 @@ A set of ComfyUI nodes based on [VoxCPM](https://github.com/OpenBMB/VoxCPM) for 
 ## Example Workflows
 
 ### 1. Generate Audio from SRT (SRT to Speech)
-- **Workflow File**: `\workflows\SRT_VoxCPM.json`
+- **Workflow File**: [SRT Processor Workflow](\workflows\SRT_VoxCPM.json)
 - **Screenshot**:
   ![SRT Processor Workflow](assets/SRT_Processor.png)
 
 ### 2. Edit Audio with SRT (Dubbing)
-- **Workflow File**: `\workflows\SRT_VoxCPM_edit.json`
+- **Workflow File**: [SRT Dubber Workflow](\workflows\SRT_VoxCPM_edit.json)
 - **Screenshot**:
   ![SRT Dubber Workflow](assets/SRT_dubber.png)
 
