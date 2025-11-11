@@ -89,6 +89,9 @@
 - **效果图**:
   ![SRT Dubber Workflow](assets/SRT_dubber.png)
 
+### 示例
+https://github.com/judian17/ComfyUI-SRT-subtitles-VoxCPM/assets/Mr.Ma.flac
+
 ## 补充说明
 
 本人仅有少量的python代码知识，此节点基于 [VoxCPM](https://github.com/OpenBMB/VoxCPM) ，代码使用 Gemini 2.5 pro 的编写。目前节点仍存在一些待完善之处（如 `torch.compile` 的兼容性和模型卸载机制）。由于个人时间和能力所限，非常欢迎社区的朋友在遵守 [VoxCPM](https://github.com/OpenBMB/VoxCPM) 使用协议的前提下，自由使用、修改和优化此节点。期待您的贡献！

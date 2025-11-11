@@ -11,7 +11,7 @@ class VoxCPM:
             voxcpm_model_path : str,
             zipenhancer_model_path : str = "iic/speech_zipenhancer_ans_multiloss_16k_base",
             enable_denoiser : bool = True,
-            optimize: bool = True,
+            optimization_mode: str = "none",
         ):
         """Initialize VoxCPM TTS pipeline.
 
@@ -25,11 +25,14 @@ class VoxCPM:
             optimize: Whether to optimize the model with torch.compile. True by default, but can be disabled for debugging.
         """
         print(f"voxcpm_model_path: {voxcpm_model_path}, zipenhancer_model_path: {zipenhancer_model_path}, enable_denoiser: {enable_denoiser}")
-        self.tts_model = VoxCPMModel.from_local(voxcpm_model_path, optimize=optimize)
+        self.tts_model = VoxCPMModel.from_local(voxcpm_model_path, optimization_mode=optimization_mode)
         self.text_normalizer = None
+    # --- 这是核心修复 ---
         if enable_denoiser and zipenhancer_model_path is not None:
             from .zipenhancer import ZipEnhancer
-            self.denoiser = ZipEnhancer(zipenhancer_model_path)
+            # 从已加载的 TTS 模型中获取正确的设备
+            denoiser_device = self.tts_model.device
+            self.denoiser = ZipEnhancer(zipenhancer_model_path, device=denoiser_device)
         else:
             self.denoiser = None
         print("Warm up VoxCPMModel...")
@@ -45,6 +48,7 @@ class VoxCPM:
             zipenhancer_model_id: str = "iic/speech_zipenhancer_ans_multiloss_16k_base",
             cache_dir: str = None,
             local_files_only: bool = False,
+            optimization_mode: str = "none",
             **kwargs,
         ):
         """Instantiate ``VoxCPM`` from a Hugging Face Hub snapshot.
@@ -87,6 +91,7 @@ class VoxCPM:
             voxcpm_model_path=local_path,
             zipenhancer_model_path=zipenhancer_model_id if load_denoiser else None,
             enable_denoiser=load_denoiser,
+            optimization_mode=optimization_mode,
             **kwargs,
         )
 

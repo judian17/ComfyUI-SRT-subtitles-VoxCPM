@@ -222,13 +222,14 @@ class VoxCPM_Loader:
         return {
             "required": {
                 "model_name": (model_names, {"default": model_names[0]}),
-                "optimize": ("BOOLEAN", {"default": False}), 
+                "optimize": (["none", "no_fullgraph", "fullgraph"], {"default": "none"}), 
+                "load_denoiser": ("BOOLEAN", {"default": True}),
             }
         }
     @classmethod
-    def IS_CHANGED(s, model_name, optimize):
-        return f"{model_name}-{optimize}"
-    def load_model(self, model_name, optimize):
+    def IS_CHANGED(s, model_name, optimize, load_denoiser): 
+        return f"{model_name}-{optimize}-{load_denoiser}"
+    def load_model(self, model_name, optimize, load_denoiser):
         hf_id = "openbmb/VoxCPM-0.5B"
         try:
             tts_root = folder_paths.get_folder_paths("tts")[0]
@@ -253,9 +254,9 @@ class VoxCPM_Loader:
         try:
             model = voxcpm.VoxCPM.from_pretrained(
                 hf_model_id=load_path, 
-                load_denoiser=True,
+                load_denoiser=load_denoiser,
                 cache_dir=download_cache_dir,
-                optimize=optimize 
+                optimization_mode=optimize 
             )
             return (model,)
         except Exception as e:
@@ -360,7 +361,7 @@ class VoxCPM_SRT_Processor:
                 "stretch_hop_length": ("INT", {"default": 8, "min": 8, "max": 2048, "step": 8}),
                 "keep_model_loaded": ("BOOLEAN", {"default": True}),
                 "cfg_value": ("FLOAT", {"default": 2.0, "min": 1.0, "max": 10.0, "step": 0.1}),
-                "inference_timesteps": ("INT", {"default": 15, "min": 1, "max": 100, "step": 1}),
+                "inference_timesteps": ("INT", {"default": 30, "min": 1, "max": 100, "step": 1}),
                 "seed": ("INT", {"default": -1, "min": -1, "max": 0x7FFFFFFFFFFFFFFF}),
                 "retry_max_attempts": ("INT", {"default": 3, "min": 0, "max": 10}),
                 "retry_threshold": ("FLOAT", {"default": 6.0, "min": 2.0, "max": 20.0}),
@@ -511,7 +512,7 @@ class VoxCPM_SRT_Dubber:
                 "stretch_n_fft": ("INT", {"default": 320, "min": 128, "max": 8192, "step": 8}),
                 "stretch_hop_length": ("INT", {"default": 8, "min": 8, "max": 2048, "step": 8}),
                 "cfg_value": ("FLOAT", {"default": 2.0, "min": 1.0, "max": 10.0, "step": 0.1}),
-                "inference_timesteps": ("INT", {"default": 15, "min": 1, "max": 100, "step": 1}),
+                "inference_timesteps": ("INT", {"default": 30, "min": 1, "max": 100, "step": 1}),
                 "seed": ("INT", {"default": -1, "min": -1, "max": 0x7FFFFFFFFFFFFFFF}),
                 "retry_max_attempts": ("INT", {"default": 3, "min": 0, "max": 10}),
                 "retry_threshold": ("FLOAT", {"default": 6.0, "min": 2.0, "max": 20.0}),

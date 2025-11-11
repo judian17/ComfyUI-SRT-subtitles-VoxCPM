@@ -17,16 +17,31 @@ from modelscope.utils.constant import Tasks
 
 class ZipEnhancer:
     """ZipEnhancer Audio Denoising Enhancer"""
-    def __init__(self, model_path: str = "iic/speech_zipenhancer_ans_multiloss_16k_base"):
+    def __init__(self, 
+                 model_path: str = "iic/speech_zipenhancer_ans_multiloss_16k_base",
+                 device: str = "auto" 
+                 ):
         """
         Initialize ZipEnhancer
         Args:
             model_path: ModelScope model path or local path
+            device: Device to run on ('auto', 'cuda', 'cpu') # <-- 添加注释
         """
         self.model_path = model_path
+
+        if device == "auto":
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+        print(f"[ZipEnhancer] Initializing on device: {device}")
+
         self._pipeline = pipeline(
                 Tasks.acoustic_noise_suppression,
-                model=self.model_path
+                model=self.model_path,
+                device=device
             )
         
     def _normalize_loudness(self, wav_path: str):

@@ -116,6 +116,7 @@ class VoxCPMModel(nn.Module):
         encoder_config.kv_channels = config.encoder_config.kv_channels
         encoder_config.vocab_size = 0
         self.feat_encoder = VoxCPMLocEnc(encoder_config, input_dim=config.feat_dim)
+        
 
         # Local DiT
         decoder_config = config.lm_config.model_copy(deep=True)
@@ -153,27 +154,74 @@ class VoxCPMModel(nn.Module):
         self.sample_rate = audio_vae.sample_rate
 
     
-    def optimize(self, disable: bool = False):
+    def optimize(self, mode: str = "none"):
+        """
+        Applies torch.compile to key model components based on the specified mode.
+        
+        Args:
+            mode (str): One of "none", "no_fullgraph", "fullgraph".
+        """
         try:
-            if disable:
-                raise ValueError("Optimization disabled by user")
+            # 模式 1: "none" - 不编译
+            if mode == "none":
+                print("[VoxCPM] Optimization skipped (mode='none'). Setting default forward_step functions.")
+                self.base_lm.forward_step = self.base_lm.forward_step
+                self.residual_lm.forward_step = self.residual_lm.forward_step
+                self.feat_encoder_step = self.feat_encoder
+                return self
+            
+            # --- 以下是编译逻辑 ---
+            
+            # 模式 2: "no_fullgraph" - 安全编译 (兼容默认的异步分配器)
+            elif mode == "no_fullgraph":
+                print("[VoxCPM] Compiling in 'no_fullgraph' mode (async allocator safe).")
+                use_fullgraph = False
+                compile_options = {"triton.cudagraphs": False} # 显式禁用
+            
+            # 模式 3: "fullgraph" - 极限编译 (需要同步分配器)
+            elif mode == "fullgraph":
+                print("[VoxCPM] Compiling in 'fullgraph' mode (max speed).")
+                print("         ===================================================================")
+                print("         [VoxCPM] 警告: 'fullgraph' 模式为达最佳性能, 启用了 'triton.cudagraphs'。")
+                print("         [VoxCPM] 这要求您必须以 'cudaMalloc' (同步) 分配器模式启动 ComfyUI。")
+                print("         [VoxCPM] 否则, 程序可能会因 'cudaMallocAsync' 冲突而崩溃。")
+                print("         [VoxCPM] (启动脚本中设置: set PYTORCH_CUDA_ALLOC_CONF=backend:cudaMalloc)")
+                print("         ===================================================================")
+                use_fullgraph = True
+                compile_options = {"triton.cudagraphs": True} # 显式启用
+            
+            else:
+                # 理论上不会发生
+                raise ValueError(f"未知的 optimization mode: {mode}")
+
+            # --- 检查环境 ---
             if self.device != "cuda":
                 raise ValueError("VoxCPMModel can only be optimized on CUDA device")
+            
             try:
                 import triton
-            except:
-                raise ValueError("triton is not installed")
-            self.base_lm.forward_step = torch.compile(self.base_lm.forward_step, mode="reduce-overhead", fullgraph=True)
-            self.residual_lm.forward_step = torch.compile(self.residual_lm.forward_step, mode="reduce-overhead", fullgraph=True)
-            self.feat_encoder_step = torch.compile(self.feat_encoder, mode="reduce-overhead", fullgraph=True)
-            self.feat_decoder.estimator = torch.compile(self.feat_decoder.estimator, mode="reduce-overhead", fullgraph=True)
+            except ImportError:
+                raise ValueError("triton is not installed (required for torch.compile)")
+
+            # --- 执行编译 ---
+            print(f"[VoxCPM] Starting torch.compile (fullgraph={use_fullgraph}, options={compile_options})...")
+            
+            self.base_lm.forward_step = torch.compile(self.base_lm.forward_step, fullgraph=use_fullgraph, options=compile_options)
+            self.residual_lm.forward_step = torch.compile(self.residual_lm.forward_step, fullgraph=use_fullgraph, options=compile_options)
+            self.feat_encoder_step = torch.compile(self.feat_encoder, fullgraph=use_fullgraph, options=compile_options)
+            self.feat_decoder.estimator = torch.compile(self.feat_decoder.estimator, fullgraph=use_fullgraph, options=compile_options)
+            
+            print("[VoxCPM] Model compilation finished.")
+
         except Exception as e:
-            print(f"Error: {e}")
-            print("Warning: VoxCPMModel can not be optimized by torch.compile, using original forward_step functions")
+            print(f"Error during torch.compile: {e}")
+            print("Warning: VoxCPMModel could not be optimized, falling back to eager mode (non-compiled).")
+            # 编译失败时，设置默认值以防万一
             self.base_lm.forward_step = self.base_lm.forward_step
             self.residual_lm.forward_step = self.residual_lm.forward_step
             self.feat_encoder_step = self.feat_encoder
-            self.feat_decoder.estimator = self.feat_decoder.estimator
+            pass 
+            
         return self
 
 
@@ -694,7 +742,7 @@ class VoxCPMModel(nn.Module):
             yield feat_pred, pred_feat_seq.squeeze(0).cpu()
 
     @classmethod
-    def from_local(cls, path: str, optimize: bool = True):
+    def from_local(cls, path: str, optimization_mode: str = "none"):
         config = VoxCPMConfig.model_validate_json(open(os.path.join(path, "config.json")).read())
 
         tokenizer = LlamaTokenizerFast.from_pretrained(path)
@@ -720,4 +768,4 @@ class VoxCPMModel(nn.Module):
         for kw, val in vae_state_dict.items():
             model_state_dict[f"audio_vae.{kw}"] = val
         model.load_state_dict(model_state_dict, strict=True)
-        return model.to(model.device).eval().optimize(disable=not optimize)
+        return model.to(model.device).eval().optimize(mode=optimization_mode)

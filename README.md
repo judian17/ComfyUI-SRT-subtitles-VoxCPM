@@ -89,6 +89,9 @@ A set of ComfyUI nodes based on [VoxCPM](https://github.com/OpenBMB/VoxCPM) for 
 - **Screenshot**:
   ![SRT Dubber Workflow](assets/SRT_dubber.png)
 
+### Example
+https://github.com/judian17/ComfyUI-SRT-subtitles-VoxCPM/assets/Mr.Ma.flac
+
 ## Additional Notes
 
 I have only a little knowledge of python code. This node is based on [VoxCPM](https://github.com/OpenBMB/VoxCPM), and the code was written with the assistance of Gemini 2.5 Pro.
