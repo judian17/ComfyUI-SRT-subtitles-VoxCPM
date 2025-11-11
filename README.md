@@ -90,7 +90,11 @@ A set of ComfyUI nodes based on [VoxCPM](https://github.com/OpenBMB/VoxCPM) for 
   ![SRT Dubber Workflow](assets/SRT_dubber.png)
 
 ### Example
-https://github.com/judian17/ComfyUI-SRT-subtitles-VoxCPM/assets/Mr.Ma.flac
+
+<audio controls>
+  <source src="assets/Mr.Ma.flac" type="audio/flac">
+  Your browser does not support playing this audio.
+</audio>
 
 ## Additional Notes
 
