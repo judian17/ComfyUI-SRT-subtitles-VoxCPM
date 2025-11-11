@@ -91,7 +91,7 @@
 
 ### 示例
 
-<video src="assets/Mr.Ma.mp4" controls width="400"></video>
+点击播放: [Mr.Ma.mp4](assets/Mr.Ma.mp4)
 
 ## 补充说明
 
