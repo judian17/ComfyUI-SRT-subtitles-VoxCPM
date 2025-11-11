@@ -8,6 +8,7 @@ import folder_paths
 import tempfile
 import soundfile as sf
 import logging
+logger = logging.getLogger(__name__)
 import time
 
 # 导入 ComfyUI 的模型管理器
@@ -15,10 +16,17 @@ import comfy.model_management as model_management
 
 # ... (所有其他 import 语句保持不变) ...
 try:
-    import voxcpm
-    import voxcpm.utils.text_normalize 
-except ImportError:
-    print("Error: 'voxcpm' library not found. Please run 'pip install voxcpm'.")
+    # 导入本地的 "voxcpm" 包
+    from . import voxcpm
+
+    # 导入我们需要的子模块
+    from .voxcpm.utils import text_normalize
+
+    logger.info("Successfully imported local 'voxcpm' library.")
+
+except ImportError as e:
+    logger.error(f"Failed to import local 'voxcpm' library. Make sure it's copied into the node directory. Error: {e}")
+    raise e
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -380,7 +388,7 @@ class VoxCPM_SRT_Processor:
             torch.manual_seed(seed)
             if normalize_text and model.text_normalizer is None:
                 logger.info("Initializing Text Normalizer...")
-                model.text_normalizer = voxcpm.utils.text_normalize.TextNormalizer()
+                model.text_normalizer = text_normalize.TextNormalizer()
             single_speaker_name = None
             if len(cache_group) == 1:
                 single_speaker_name = list(cache_group.keys())[0]
@@ -531,7 +539,7 @@ class VoxCPM_SRT_Dubber:
             torch.manual_seed(seed)
             if normalize_text and model.text_normalizer is None:
                 logger.info("Initializing Text Normalizer...")
-                model.text_normalizer = voxcpm.utils.text_normalize.TextNormalizer()
+                model.text_normalizer = text_normalize.TextNormalizer()
             VOX_SR = 16000
             ORIG_SR = original_audio["sample_rate"]
             waveform_tensor = original_audio["waveform"].squeeze(0)
