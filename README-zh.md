@@ -90,7 +90,8 @@
   ![SRT Dubber Workflow](assets/SRT_dubber.png)
 
 ### 示例
-https://github.com/judian17/ComfyUI-SRT-subtitles-VoxCPM/assets/Mr.Ma.flac
+
+<video src="assets/Mr.Ma.mp4" controls width="400"></video>
 
 ## 补充说明
 

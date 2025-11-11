@@ -91,10 +91,7 @@ A set of ComfyUI nodes based on [VoxCPM](https://github.com/OpenBMB/VoxCPM) for 
 
 ### Example
 
-<audio controls>
-  <source src="assets/Mr.Ma.flac" type="audio/flac">
-  Your browser does not support playing this audio.
-</audio>
+<video src="assets/Mr.Ma.mp4" controls width="400"></video>
 
 ## Additional Notes
 
