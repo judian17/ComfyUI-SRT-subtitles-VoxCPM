@@ -91,7 +91,7 @@ A set of ComfyUI nodes based on [VoxCPM](https://github.com/OpenBMB/VoxCPM) for 
 
 ### Example
 
-<video src="assets/Mr.Ma.mp4" controls width="400"></video>
+[Mr.Ma.mp4](assets/Mr.Ma.mp4)
 
 ## Additional Notes
 
