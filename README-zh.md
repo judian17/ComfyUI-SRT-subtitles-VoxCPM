@@ -89,6 +89,11 @@
 - **效果图**:
   ![SRT Dubber Workflow](assets/SRT_dubber.png)
 
+### 3. 中-英语视频保持音色替换语言
+- **Workflow File**: [SRT Dubber Workflow](\workflows\SRT_VoxCPM_transfer.json)
+- **Screenshot**:
+  ![SRT Dubber Workflow](assets/SRT_Transfer_language.png)
+
 ### 示例
 
 点击播放: [Mr.Ma.mp4](assets/Mr.Ma.mp4)

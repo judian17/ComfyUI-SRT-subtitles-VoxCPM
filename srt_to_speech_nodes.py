@@ -691,19 +691,284 @@ class Audio_Trimmer_By_Timestamp:
             logger.error(f"Failed to parse timestamp '{timestamp}'. Error: {e}")
             return (audio,)
 
+# ... (保留你原来的所有代码，将以下内容追加到文件末尾) ...
+
+# --- 节点 6: SRT 自动配音器 (逐句参考源音频) ---
+class VoxCPM_SRT_Auto_Dubber:
+    CATEGORY = "audio/tts"
+    RETURN_TYPES = ("AUDIO",)
+    FUNCTION = "process_auto_dub"
+
+    @classmethod
+    def INPUT_TYPES(s):
+        stretch_options = ["none"]
+        if LIBROSA_AVAILABLE:
+            stretch_options.append("librosa")
+        if PYDUB_AVAILABLE:
+            stretch_options.append("pydub")
+        return {
+            "required": {
+                "model": ("VOXCPM_MODEL", ), 
+                "original_audio": ("AUDIO", ),
+                "source_srt_text": ("STRING", {"multiline": True, "default": "Source Language SRT (Transcript)..."}),
+                "target_srt_text": ("STRING", {"multiline": True, "default": "Target Language SRT (Translation)..."}),
+                "normalize_text": ("BOOLEAN", {"default": True}),
+                "stretch_method": (stretch_options, {"default": "librosa"}),
+                "keep_model_loaded": ("BOOLEAN", {"default": True}),
+                "stretch_n_fft": ("INT", {"default": 320, "min": 128, "max": 8192, "step": 8}),
+                "stretch_hop_length": ("INT", {"default": 8, "min": 8, "max": 2048, "step": 8}),
+                "cfg_value": ("FLOAT", {"default": 2.0, "min": 1.0, "max": 10.0, "step": 0.1}),
+                "inference_timesteps": ("INT", {"default": 30, "min": 1, "max": 100, "step": 1}),
+                "seed": ("INT", {"default": -1, "min": -1, "max": 0x7FFFFFFFFFFFFFFF}),
+                "retry_max_attempts": ("INT", {"default": 3, "min": 0, "max": 10}),
+                "retry_threshold": ("FLOAT", {"default": 6.0, "min": 2.0, "max": 20.0}),
+            }
+        }
+    
+    def process_auto_dub(self, model, original_audio, source_srt_text, target_srt_text,
+                         normalize_text, stretch_method, 
+                         keep_model_loaded,
+                         stretch_n_fft, stretch_hop_length,
+                         cfg_value, inference_timesteps, seed, retry_max_attempts, retry_threshold):
+
+        if model is None:
+            raise RuntimeError("Model not loaded. Please connect a VoxCPM_Loader node.")
+
+        device = model_management.get_torch_device()
+        offload_device = model_management.unet_offload_device()
+
+        # 解析两个字幕文件
+        logger.info("Parsing Source and Target SRTs...")
+        source_entries = parse_srt(source_srt_text, is_multi_speaker_mode=False)
+        target_entries = parse_srt(target_srt_text, is_multi_speaker_mode=False)
+
+        # 将源字幕转换为字典，以索引(Index)为Key，方便查找
+        # source_dict结构: {'1': (start, end, text), '2': ...}
+        source_dict = {entry[0]: entry for entry in source_entries}
+
+        try:
+            logger.info(f"Moving VoxCPM model to {device} for Auto-Dubbing...")
+            move_voxcpm_to_device(model, device)
+            
+            if seed == -1:
+                seed = torch.randint(0, 0x7FFFFFFFFFFFFFFF, (1,)).item()
+            torch.manual_seed(seed)
+            
+            if normalize_text and model.text_normalizer is None:
+                logger.info("Initializing Text Normalizer...")
+                model.text_normalizer = text_normalize.TextNormalizer()
+
+            # 准备音频数据
+            VOX_SR = 16000
+            ORIG_SR = original_audio["sample_rate"]
+            waveform_tensor = original_audio["waveform"].squeeze(0) # [channels, samples]
+            
+            # 确保处理的是单声道用于切片，但保留原始声道信息可能用于最终混合（这里简单起见，时间轴使用单声道合成，后续可扩展）
+            if waveform_tensor.dim() == 2 and waveform_tensor.shape[0] > 1:
+                logger.info(f"Original audio is stereo, converting to mono for processing context.")
+                waveform_mono = torch.mean(waveform_tensor, dim=0)
+            else:
+                waveform_mono = waveform_tensor.squeeze()
+            
+            # 准备输出的时间轴
+            # 我们以原始音频长度为基准，复制一份全静音的或者保留原始背景音（这里逻辑是Dubbing，通常保留背景音很难分离，所以我们假设完全替换对应片段）
+            # 简单起见，创建一个全静音的画布，长度等于原音频。
+            # *如果用户希望保留背景音，需要在ComfyUI里做Audio Mix，本节点只输出人声*
+            timeline_audio_np = np.zeros(waveform_mono.shape[0], dtype=np.float32)
+            
+            logger.info(f"Starting Auto-Dubbing process. Found {len(target_entries)} target lines.")
+
+            for i, (t_index, t_start, t_end, _, t_text) in enumerate(target_entries):
+                # 1. 在源字幕中找到对应行（用于提取参考音频和参考文本）
+                if t_index not in source_dict:
+                    logger.warning(f"Line index {t_index} found in Target SRT but missing in Source SRT. Skipping.")
+                    continue
+                
+                s_index, s_start, s_end, _, s_text = source_dict[t_index]
+                
+                # 2. 切割源音频作为 Reference
+                # 计算采样点
+                s_start_sample = int(s_start * ORIG_SR)
+                s_end_sample = int(s_end * ORIG_SR)
+                
+                # 边界检查
+                s_start_sample = max(0, s_start_sample)
+                s_end_sample = min(len(waveform_mono), s_end_sample)
+                
+                if s_end_sample - s_start_sample < 1600: # 小于0.1秒忽略
+                    logger.warning(f"Source audio segment {t_index} too short. Skipping.")
+                    continue
+
+                ref_wav_slice = waveform_mono[s_start_sample:s_end_sample]
+                
+                # 3. 构建临时的 Prompt Cache (这是本节点的灵魂：每一句都现场学习)
+                temp_wav_path = ""
+                prompt_cache = None
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+                        temp_wav_path = tmp_file.name
+                    
+                    # 写入临时文件供VoxCPM读取
+                    sf.write(temp_wav_path, ref_wav_slice.cpu().numpy(), ORIG_SR)
+                    
+                    # 归一化 Prompt Text (源文本)
+                    clean_prompt_text = s_text
+                    if normalize_text:
+                        clean_prompt_text = model.text_normalizer.normalize(clean_prompt_text)
+
+                    # 构建 Cache
+                    # logger.info(f"Building cache for Line {t_index} using source audio ({s_start:.1f}-{s_end:.1f}s)")
+                    prompt_cache = model.tts_model.build_prompt_cache(
+                        prompt_wav_path=temp_wav_path,
+                        prompt_text=clean_prompt_text
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to build cache for line {t_index}: {e}")
+                    continue
+                finally:
+                    if temp_wav_path and os.path.exists(temp_wav_path):
+                        os.unlink(temp_wav_path)
+
+                # 4. 生成目标音频
+                clean_target_text = t_text
+                if normalize_text:
+                    clean_target_text = model.text_normalizer.normalize(clean_target_text)
+                
+                logger.info(f"Generating Line {t_index}: '{clean_target_text[:30]}...'")
+                
+                gen_result = model.tts_model.generate_with_prompt_cache(
+                    target_text=clean_target_text,
+                    prompt_cache=prompt_cache, # 使用刚才现场生成的Cache
+                    cfg_value=cfg_value,
+                    inference_timesteps=inference_timesteps,
+                    retry_badcase=retry_max_attempts > 0,
+                    retry_badcase_max_times=retry_max_attempts,
+                    retry_badcase_ratio_threshold=retry_threshold,
+                )
+                
+                (wav_tensor, _, _) = gen_result
+                wav_16k = wav_tensor.squeeze().cpu().numpy()
+                
+                # 5. 后处理：变速与对齐 (对齐到 Target SRT 的时间轴)
+                target_duration = t_end - t_start
+                
+                # 如果需要变速
+                if stretch_method != "none":
+                    current_duration = len(wav_16k) / VOX_SR
+                    if current_duration > target_duration and target_duration > 0.1:
+                        stretch_rate = current_duration / target_duration
+                        # 限制最大变速比，避免过分鬼畜
+                        stretch_rate = min(stretch_rate, 2.0) 
+                        
+                        if stretch_method == "pydub" and PYDUB_AVAILABLE:
+                            try:
+                                wav_int16 = (wav_16k * 32767).astype(np.int16)
+                                audio_segment = pydub.AudioSegment(data=wav_int16.tobytes(), sample_width=2, frame_rate=VOX_SR, channels=1)
+                                new_audio = audio_segment.speedup(playback_speed=stretch_rate)
+                                wav_int16_new = np.frombuffer(new_audio.raw_data, dtype=np.int16)
+                                wav_16k = wav_int16_new.astype(np.float32) / 32768.0
+                            except Exception:
+                                pass # Fallback handled naturally or just skip stretch
+                        elif stretch_method == "librosa" and LIBROSA_AVAILABLE:
+                            wav_16k = librosa.effects.time_stretch(wav_16k, rate=stretch_rate, n_fft=stretch_n_fft, hop_length=stretch_hop_length)
+                        
+                        # 硬截断以防止溢出
+                        max_samples = int(target_duration * VOX_SR)
+                        if len(wav_16k) > max_samples:
+                            wav_16k = wav_16k[:max_samples]
+
+                # 6. 重采样回原始采样率
+                if ORIG_SR != VOX_SR and LIBROSA_AVAILABLE:
+                    wav_final = librosa.resample(wav_16k, orig_sr=VOX_SR, target_sr=ORIG_SR)
+                else:
+                    wav_final = wav_16k
+
+                # 7. 放入时间轴
+                t_start_sample = int(t_start * ORIG_SR)
+                t_end_sample = t_start_sample + len(wav_final)
+                
+                # 扩展时间轴如果不够长
+                if t_end_sample > len(timeline_audio_np):
+                    padding = np.zeros(t_end_sample - len(timeline_audio_np), dtype=np.float32)
+                    timeline_audio_np = np.concatenate([timeline_audio_np, padding])
+                
+                # 叠加（这里选择直接覆盖，因为是配音；如果重叠则相加）
+                # 简单的淡入淡出可以防止爆音，这里先做简单覆盖
+                timeline_audio_np[t_start_sample : t_end_sample] = wav_final
+
+            # 封装输出
+            final_waveform = torch.from_numpy(timeline_audio_np).float().unsqueeze(0) # [1, samples]
+            final_audio = {"waveform": final_waveform.unsqueeze(0), "sample_rate": ORIG_SR} # [1, 1, samples]
+            
+            return (final_audio,)
+
+        finally:
+            if not keep_model_loaded:
+                logger.info(f"Unloading VoxCPM model to {offload_device}...")
+                offload_voxcpm(model, offload_device)
+                model_management.soft_empty_cache()
+
+
+# --- 节点 7: 文本文件加载器 (处理路径和引号) ---
+class Load_Text_From_File:
+    CATEGORY = "utils"
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "load_file"
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "file_path": ("STRING", {"default": "C:\\path\\to\\subtitle.srt"}),
+            }
+        }
+
+    def load_file(self, file_path):
+        # 1. 清理路径：移除首尾的引号 (Windows "复制为路径" 经常带引号)
+        cleaned_path = file_path.strip().strip('"').strip("'")
+        
+        # 2. 检查文件是否存在
+        if not os.path.exists(cleaned_path):
+            logger.error(f"File not found: {cleaned_path}")
+            return (f"Error: File not found at {cleaned_path}",)
+        
+        # 3. 尝试读取内容
+        try:
+            with open(cleaned_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return (content,)
+        except UnicodeDecodeError:
+            # 尝试 fallback 编码
+            try:
+                with open(cleaned_path, 'r', encoding='gbk') as f:
+                    content = f.read()
+                return (content,)
+            except Exception as e:
+                 return (f"Error reading file: {e}",)
+        except Exception as e:
+            return (f"Error reading file: {e}",)
+
+
+# --- 更新映射表 ---
+
 NODE_CLASS_MAPPINGS = {
     "VoxCPM_Loader": VoxCPM_Loader,
     "VoxCPM_Cache_Builder": VoxCPM_Cache_Builder,
     "VoxCPM_Cache_Combiner": VoxCPM_Cache_Combiner,
     "VoxCPM_SRT_Processor": VoxCPM_SRT_Processor,
     "VoxCPM_SRT_Dubber": VoxCPM_SRT_Dubber,
+    "VoxCPM_SRT_Auto_Dubber": VoxCPM_SRT_Auto_Dubber, # 新增
     "Audio_Trimmer_By_Timestamp": Audio_Trimmer_By_Timestamp,
+    "Load_Text_From_File": Load_Text_From_File,       # 新增
 }
+
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VoxCPM_Loader": "VoxCPM Loader",
     "VoxCPM_Cache_Builder": "VoxCPM Cache Builder",
     "VoxCPM_Cache_Combiner": "VoxCPM Cache Combiner (Chainable)",
     "VoxCPM_SRT_Processor": "VoxCPM SRT Processor (from Scratch)",
     "VoxCPM_SRT_Dubber": "VoxCPM SRT Dubber (Replace Audio)",
+    "VoxCPM_SRT_Auto_Dubber": "VoxCPM SRT Auto-Dubber (Line-by-Line Ref)", # 新增
     "Audio_Trimmer_By_Timestamp": "Audio Trimmer (by Timestamp)",
+    "Load_Text_From_File": "Load Text from File (Path)",                   # 新增
 }

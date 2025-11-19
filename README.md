@@ -89,6 +89,11 @@ A set of ComfyUI nodes based on [VoxCPM](https://github.com/OpenBMB/VoxCPM) for 
 - **Screenshot**:
   ![SRT Dubber Workflow](assets/SRT_dubber.png)
 
+### 3. Transfer language with SRT
+- **Workflow File**: [SRT Dubber Workflow](\workflows\SRT_VoxCPM_transfer.json)
+- **Screenshot**:
+  ![SRT Dubber Workflow](assets/SRT_Transfer_language.png)
+
 ### Example
 
 [Mr.Ma.mp4](assets/Mr.Ma.mp4)
